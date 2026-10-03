@@ -1,0 +1,689 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Secure Chat — Prototype</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E%F0%9F%94%90%3C/text%3E%3C/svg%3E" />
+    <style>
+      /* =====================================================================
+         SECURE CHAT — CYBER THEME
+         Only the look changed. Every element ID used by app.js is unchanged.
+         Status colours come from the classes app.js already sets:
+           status-idle | status-busy | status-ok | status-warn | status-err
+         fx.js copies that state onto <body data-state="…"> so the whole page
+         (background, glow, borders) shifts colour with the connection state.
+         ===================================================================== */
+
+      /* Animatable colour variables (smooth colour transitions between states) */
+      @property --accent { syntax: "<color>"; inherits: true; initial-value: #00e5ff; }
+      @property --accent-2 { syntax: "<color>"; inherits: true; initial-value: #7c4dff; }
+
+      :root {
+        --bg: #04060c;
+        --panel: rgba(10, 16, 30, 0.72);
+        --panel-solid: #0a101e;
+        --line: rgba(0, 229, 255, 0.18);
+        --text: #d7e3f4;
+        --muted: #7d8ca8;
+        --cyan: #00e5ff;
+        --green: #00ff9c;
+        --amber: #ffb020;
+        --orange: #ff7a1a;
+        --red: #ff3b5c;
+        --violet: #7c4dff;
+        --magenta: #ff2bd6;
+        --mono: "Cascadia Code", "JetBrains Mono", "SF Mono", Consolas, "Courier New", monospace;
+        --sans: "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
+        --accent: var(--cyan);
+        --accent-2: var(--violet);
+        transition: --accent 0.9s ease, --accent-2 0.9s ease;
+      }
+
+      /* Page-wide colour per connection state */
+      body[data-state="idle"] { --accent: #00e5ff; --accent-2: #7c4dff; }
+      body[data-state="busy"] { --accent: #ffb020; --accent-2: #ff2bd6; }
+      body[data-state="ok"]   { --accent: #00ff9c; --accent-2: #00e5ff; }
+      body[data-state="warn"] { --accent: #ff7a1a; --accent-2: #ffb020; }
+      body[data-state="err"]  { --accent: #ff3b5c; --accent-2: #ff2bd6; }
+      body { transition: --accent 0.9s ease, --accent-2 0.9s ease; }
+
+      * { box-sizing: border-box; }
+
+      html { background: var(--bg); }
+
+      body {
+        font-family: var(--sans);
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 28px 16px 40px;
+        min-height: 100vh;
+        color: var(--text);
+        background: transparent;
+        position: relative;
+      }
+
+      /* ---------- Background layers ---------- */
+
+      /* 1. Animated gradient aurora (colour follows the state) */
+      body::before {
+        content: "";
+        position: fixed;
+        inset: -20%;
+        z-index: -3;
+        background:
+          radial-gradient(40% 35% at 20% 25%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 70%),
+          radial-gradient(45% 40% at 80% 30%, color-mix(in srgb, var(--accent-2) 20%, transparent), transparent 70%),
+          radial-gradient(50% 45% at 50% 90%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%),
+          var(--bg);
+        background-size: 140% 140%;
+        animation: aurora 18s ease-in-out infinite alternate;
+      }
+
+      /* 2. Moving cyber grid */
+      body::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: -1;
+        pointer-events: none;
+        background-image:
+          linear-gradient(color-mix(in srgb, var(--accent) 9%, transparent) 1px, transparent 1px),
+          linear-gradient(90deg, color-mix(in srgb, var(--accent) 9%, transparent) 1px, transparent 1px);
+        background-size: 44px 44px;
+        mask-image: radial-gradient(ellipse at 50% 40%, #000 30%, transparent 80%);
+        -webkit-mask-image: radial-gradient(ellipse at 50% 40%, #000 30%, transparent 80%);
+        animation: gridMove 12s linear infinite;
+      }
+
+      /* 3. Matrix rain canvas (drawn by fx.js) */
+      #matrix {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        z-index: -2;
+        pointer-events: none;
+        opacity: 0.22;
+      }
+
+      /* 4. CRT scanlines */
+      .scanlines {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        pointer-events: none;
+        background: repeating-linear-gradient(to bottom, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 3px);
+        mix-blend-mode: overlay;
+      }
+
+      @keyframes aurora {
+        0%   { background-position: 0% 0%; }
+        50%  { background-position: 100% 50%; }
+        100% { background-position: 30% 100%; }
+      }
+      @keyframes gridMove {
+        from { background-position: 0 0, 0 0; }
+        to   { background-position: 0 44px, 44px 0; }
+      }
+
+      /* ---------- Header ---------- */
+      header { text-align: center; margin-bottom: 22px; }
+
+      .badge-top {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-family: var(--mono);
+        font-size: 11px;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        color: var(--accent);
+        padding: 4px 12px;
+        border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--accent) 8%, transparent);
+      }
+      .badge-top::before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--accent);
+        box-shadow: 0 0 8px var(--accent);
+        animation: blink 1.6s ease-in-out infinite;
+      }
+
+      h2 {
+        margin: 14px 0 6px;
+        font-family: var(--mono);
+        font-size: clamp(26px, 5vw, 40px);
+        font-weight: 800;
+        letter-spacing: 3px;
+        text-transform: uppercase;
+        background: linear-gradient(90deg, var(--accent), #ffffff 45%, var(--accent-2));
+        background-size: 200% auto;
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+        filter: drop-shadow(0 0 14px color-mix(in srgb, var(--accent) 45%, transparent));
+        animation: shine 6s linear infinite;
+      }
+      @keyframes shine { to { background-position: 200% center; } }
+
+      .subtitle {
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--muted);
+        letter-spacing: 1px;
+      }
+      .subtitle b { color: var(--text); font-weight: 600; }
+
+      /* ---------- Panels ---------- */
+      .panel {
+        position: relative;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+        border-radius: 14px;
+        padding: 16px;
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        box-shadow:
+          0 0 0 1px rgba(255, 255, 255, 0.02) inset,
+          0 10px 40px rgba(0, 0, 0, 0.45),
+          0 0 24px color-mix(in srgb, var(--accent) 10%, transparent);
+        transition: border-color 0.9s ease, box-shadow 0.9s ease;
+      }
+      /* corner brackets */
+      .panel::before,
+      .panel::after {
+        content: "";
+        position: absolute;
+        width: 14px;
+        height: 14px;
+        border: 2px solid var(--accent);
+        opacity: 0.85;
+        pointer-events: none;
+        transition: border-color 0.9s ease;
+      }
+      .panel::before { top: -1px; left: -1px; border-right: 0; border-bottom: 0; border-top-left-radius: 14px; }
+      .panel::after { bottom: -1px; right: -1px; border-left: 0; border-top: 0; border-bottom-right-radius: 14px; }
+
+      h3 {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--accent);
+        margin: 22px 0 8px;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        transition: color 0.9s ease;
+      }
+      h3::before { content: "▸"; }
+      h3::after {
+        content: "";
+        flex: 1;
+        height: 1px;
+        background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 50%, transparent), transparent);
+      }
+
+      /* ---------- Setup row ---------- */
+      #setup {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: flex-end;
+      }
+
+      #setup label {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        flex: 1 1 calc(50% - 6px);
+        min-width: 150px;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+      }
+
+      #setup .actions { display: flex; gap: 10px; flex-wrap: wrap; flex: 1 1 100%; }
+      #setup .actions button { flex: 1 1 200px; }
+
+      /* ---------- Inputs ---------- */
+      input {
+        font-family: var(--mono);
+        font-size: 14px;
+        padding: 10px 12px;
+        color: var(--text);
+        background: rgba(2, 6, 14, 0.75);
+        border: 1px solid rgba(125, 140, 168, 0.3);
+        border-radius: 8px;
+        flex: 1;
+        min-width: 0;
+        caret-color: var(--accent);
+        transition: border-color 0.25s, box-shadow 0.25s, background 0.25s;
+      }
+      input::placeholder { color: #4f5d78; }
+      input:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent), 0 0 18px color-mix(in srgb, var(--accent) 25%, transparent);
+      }
+      input:disabled { color: #8fa0bd; background: rgba(2, 6, 14, 0.45); border-style: dashed; cursor: not-allowed; }
+
+      /* ---------- Buttons ---------- */
+      button {
+        position: relative;
+        overflow: hidden;
+        font-family: var(--mono);
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        padding: 11px 16px;
+        border-radius: 8px;
+        cursor: pointer;
+        color: #fff;
+        border: 1px solid transparent;
+        transition: transform 0.15s ease, box-shadow 0.25s ease, opacity 0.25s ease, filter 0.25s ease;
+      }
+      /* light sweep on hover */
+      button::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: -120%;
+        width: 60%;
+        height: 100%;
+        background: linear-gradient(110deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+        transform: skewX(-20deg);
+        transition: left 0.6s ease;
+      }
+      button:hover:not(:disabled)::after { left: 140%; }
+      button:hover:not(:disabled) { transform: translateY(-1px); }
+      button:active:not(:disabled) { transform: translateY(1px) scale(0.99); }
+      button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+      #connectBtn {
+        background: linear-gradient(135deg, #0077ff, #00c2a8);
+        box-shadow: 0 0 18px rgba(0, 194, 168, 0.35);
+      }
+      #connectBtn:hover:not(:disabled) { box-shadow: 0 0 28px rgba(0, 229, 255, 0.6); }
+
+      #rotateBtn {
+        background: linear-gradient(135deg, #ff7a1a, #ff2bd6);
+        box-shadow: 0 0 18px rgba(255, 43, 214, 0.3);
+      }
+      #rotateBtn:hover:not(:disabled) { box-shadow: 0 0 28px rgba(255, 43, 214, 0.6); }
+
+      #sendBtn {
+        min-width: 96px;
+        background: linear-gradient(135deg, #7c4dff, #2575fc);
+        box-shadow: 0 0 18px rgba(124, 77, 255, 0.35);
+      }
+      #sendBtn:hover:not(:disabled) { box-shadow: 0 0 28px rgba(124, 77, 255, 0.65); }
+
+      #verifyBtn {
+        font-size: 12px;
+        padding: 7px 12px;
+        background: transparent;
+        color: var(--green);
+        border-color: rgba(0, 255, 156, 0.55);
+        box-shadow: 0 0 12px rgba(0, 255, 156, 0.18) inset;
+      }
+      #verifyBtn:hover:not(:disabled) { background: rgba(0, 255, 156, 0.12); box-shadow: 0 0 18px rgba(0, 255, 156, 0.4); }
+
+      button:disabled {
+        opacity: 0.35;
+        cursor: not-allowed;
+        box-shadow: none;
+        filter: grayscale(0.4);
+      }
+
+      /* ---------- Status badge ---------- */
+      .meta {
+        font-size: 12px;
+        text-align: center;
+      }
+
+      #status {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        margin-top: 16px;
+        padding: 12px 16px;
+        font-family: var(--mono);
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 1.5px;
+        border-radius: 10px;
+        border: 1px solid;
+        position: relative;
+        overflow: hidden;
+        transition: color 0.6s ease, background-color 0.6s ease, border-color 0.6s ease, box-shadow 0.6s ease;
+      }
+      /* status light */
+      #status::before {
+        content: "";
+        flex: none;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: currentColor;
+        box-shadow: 0 0 10px currentColor, 0 0 20px currentColor;
+      }
+
+      .status-idle {
+        color: #9fb0cc;
+        background: rgba(125, 140, 168, 0.08);
+        border-color: rgba(125, 140, 168, 0.35);
+      }
+      .status-idle::before { animation: blink 2.4s ease-in-out infinite; }
+
+      .status-busy {
+        color: var(--amber);
+        background: rgba(255, 176, 32, 0.08);
+        border-color: rgba(255, 176, 32, 0.55);
+        box-shadow: 0 0 22px rgba(255, 176, 32, 0.2);
+      }
+      .status-busy::before { animation: blink 0.7s ease-in-out infinite; }
+      /* scanning bar while the handshake runs */
+      .status-busy::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 30%;
+        left: -30%;
+        background: linear-gradient(90deg, transparent, rgba(255, 176, 32, 0.25), transparent);
+        animation: scan 1.4s linear infinite;
+      }
+
+      .status-ok {
+        color: var(--green);
+        background: rgba(0, 255, 156, 0.08);
+        border-color: rgba(0, 255, 156, 0.6);
+        box-shadow: 0 0 26px rgba(0, 255, 156, 0.25), inset 0 0 18px rgba(0, 255, 156, 0.08);
+        animation: secureIn 0.8s ease;
+      }
+
+      .status-warn {
+        color: var(--orange);
+        background: rgba(255, 122, 26, 0.09);
+        border-color: rgba(255, 122, 26, 0.6);
+        box-shadow: 0 0 22px rgba(255, 122, 26, 0.22);
+      }
+      .status-warn::before { animation: blink 1.1s ease-in-out infinite; }
+
+      .status-err {
+        color: var(--red);
+        background: rgba(255, 59, 92, 0.1);
+        border-color: rgba(255, 59, 92, 0.65);
+        box-shadow: 0 0 26px rgba(255, 59, 92, 0.3);
+        animation: shake 0.45s ease;
+      }
+      .status-err::before { animation: blink 0.5s steps(2) infinite; }
+
+      @keyframes blink { 50% { opacity: 0.25; } }
+      @keyframes scan { to { left: 100%; } }
+      @keyframes secureIn {
+        0% { transform: scale(0.98); box-shadow: 0 0 0 rgba(0, 255, 156, 0); }
+        40% { transform: scale(1.01); box-shadow: 0 0 46px rgba(0, 255, 156, 0.55); }
+        100% { transform: scale(1); }
+      }
+      @keyframes shake {
+        20%, 60% { transform: translateX(-5px); }
+        40%, 80% { transform: translateX(5px); }
+      }
+
+      /* ---------- Identity / key verification panel ---------- */
+      #security {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 8px 16px;
+        align-items: center;
+        margin-top: 14px;
+        font-size: 12px;
+      }
+      #security > span {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 1.2px;
+      }
+      #security code {
+        font-family: var(--mono);
+        font-size: 13px;
+        color: #c5d4ec;
+        padding: 4px 8px;
+        border-radius: 6px;
+        background: rgba(2, 6, 14, 0.55);
+        border: 1px solid rgba(125, 140, 168, 0.15);
+        overflow-wrap: anywhere;
+        letter-spacing: 0.5px;
+      }
+      #safetyCode {
+        font-weight: 700;
+        color: var(--cyan) !important;
+        text-shadow: 0 0 10px rgba(0, 229, 255, 0.55);
+        border-color: rgba(0, 229, 255, 0.35) !important;
+      }
+      #keyCheck { color: var(--magenta) !important; text-shadow: 0 0 10px rgba(255, 43, 214, 0.45); }
+      #verifyRow {
+        grid-column: 1 / -1;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        padding-top: 6px;
+        border-top: 1px dashed rgba(125, 140, 168, 0.2);
+      }
+      #verifyRow .hint { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+
+      /* ---------- Chat ---------- */
+      #chat {
+        height: 240px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 14px;
+      }
+      #chat:empty::before {
+        content: "// no messages yet — establish a secure channel to start chatting";
+        margin: auto;
+        font-family: var(--mono);
+        font-size: 12px;
+        color: #4f5d78;
+        text-align: center;
+      }
+
+      .msg {
+        max-width: 78%;
+        padding: 9px 13px;
+        border-radius: 12px;
+        font-size: 14px;
+        line-height: 1.4;
+        overflow-wrap: anywhere;
+        animation: msgIn 0.35s ease;
+      }
+      .msg-peer {
+        align-self: flex-start;
+        color: #dbe7ff;
+        background: rgba(124, 77, 255, 0.14);
+        border: 1px solid rgba(124, 77, 255, 0.45);
+        border-bottom-left-radius: 3px;
+        box-shadow: 0 0 14px rgba(124, 77, 255, 0.15);
+      }
+      .msg-me {
+        align-self: flex-end;
+        color: #dcfff1;
+        background: rgba(0, 255, 156, 0.1);
+        border: 1px solid rgba(0, 255, 156, 0.45);
+        border-bottom-right-radius: 3px;
+        box-shadow: 0 0 14px rgba(0, 255, 156, 0.12);
+      }
+      @keyframes msgIn {
+        from { opacity: 0; transform: translateY(8px) scale(0.98); filter: blur(2px); }
+        to { opacity: 1; transform: none; filter: none; }
+      }
+
+      #controls {
+        margin-top: 12px;
+        display: flex;
+        gap: 10px;
+      }
+
+      /* ---------- Security log (terminal) ---------- */
+      .flush { padding: 0; }
+      .terminal { padding: 0; overflow: hidden; }
+      .terminal-bar {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 9px 14px;
+        border-bottom: 1px solid rgba(125, 140, 168, 0.15);
+        background: rgba(2, 6, 14, 0.55);
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .terminal-bar i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+      .terminal-bar i:nth-child(1) { background: #ff5f57; }
+      .terminal-bar i:nth-child(2) { background: #febc2e; }
+      .terminal-bar i:nth-child(3) { background: #28c840; }
+      .terminal-bar span { margin-left: 8px; }
+
+      #log {
+        width: 100%;
+        height: 300px;
+        overflow-y: auto;
+        padding: 12px 14px;
+        font-family: var(--mono);
+        font-size: 12px;
+        line-height: 1.55;
+        color: #9fd8ff;
+        background: rgba(1, 3, 8, 0.6);
+      }
+      #log div {
+        margin: 1px 0;
+        overflow-wrap: anywhere;
+        animation: logIn 0.3s ease;
+      }
+      #log div::before { content: "› "; color: #3d4b66; }
+      .log-info { color: #9fd8ff; }
+      .log-ok { color: var(--green); text-shadow: 0 0 8px rgba(0, 255, 156, 0.35); }
+      .log-err { color: var(--red); text-shadow: 0 0 8px rgba(255, 59, 92, 0.35); }
+      /* blinking cursor after the last line */
+      #log::after {
+        content: "█";
+        display: inline-block;
+        color: var(--accent);
+        animation: blink 1s steps(2) infinite;
+      }
+      @keyframes logIn {
+        from { opacity: 0; transform: translateX(-6px); }
+        to { opacity: 1; transform: none; }
+      }
+
+      /* ---------- Footer ---------- */
+      footer {
+        margin-top: 24px;
+        text-align: center;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: #4f5d78;
+        letter-spacing: 1px;
+      }
+
+      /* ---------- Scrollbars ---------- */
+      #chat, #log { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--accent) 45%, transparent) transparent; }
+      #chat::-webkit-scrollbar, #log::-webkit-scrollbar { width: 8px; }
+      #chat::-webkit-scrollbar-thumb, #log::-webkit-scrollbar-thumb {
+        background: color-mix(in srgb, var(--accent) 40%, transparent);
+        border-radius: 8px;
+      }
+
+      /* ---------- Mobile ---------- */
+      @media (max-width: 600px) {
+        body { padding-top: 18px; }
+        #security { grid-template-columns: 1fr; gap: 4px; }
+        #security > span { margin-top: 6px; }
+        .msg { max-width: 90%; }
+        #chat { height: 220px; }
+        #log { height: 240px; }
+      }
+
+      /* Respect users who turn off animations in their OS */
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { animation: none !important; transition: none !important; }
+        #matrix { display: none; }
+      }
+    </style>
+  </head>
+
+  <body data-state="idle">
+    <canvas id="matrix" aria-hidden="true"></canvas>
+    <div class="scanlines" aria-hidden="true"></div>
+
+    <header>
+      <span class="badge-top">End-to-end encrypted</span>
+      <h2>🔐 Secure Chat</h2>
+      <div class="subtitle"><b>Ed25519</b> · <b>X25519</b> · <b>HKDF-SHA-256</b> · <b>AES-256-GCM</b></div>
+    </header>
+
+    <section class="panel">
+      <div id="setup">
+        <label>Your user id <input id="userId" value="alice" maxlength="32" autocomplete="off" spellcheck="false" /></label>
+        <label>Peer id <input id="peerId" value="bob" maxlength="32" autocomplete="off" spellcheck="false" /></label>
+        <div class="actions">
+          <button id="connectBtn">Start (generate keys &amp; connect)</button>
+          <button id="rotateBtn" disabled>Escalate / Rotate</button>
+        </div>
+      </div>
+
+      <div id="status" class="meta status-idle" role="status" aria-live="polite">NOT CONNECTED</div>
+    </section>
+
+    <h3>Identity verification</h3>
+    <section id="security" class="panel">
+      <span>Your fingerprint</span><code id="myFp">—</code>
+      <span>Peer fingerprint</span><code id="peerFp">—</code>
+      <span>Safety code</span><code id="safetyCode">—</code>
+      <span>Session key check</span><code id="keyCheck">—</code>
+      <div id="verifyRow">
+        <span class="hint">Compare the safety code with your peer. If it matches, mark verified.</span>
+        <button id="verifyBtn" disabled>Codes match → mark verified</button>
+      </div>
+    </section>
+
+    <h3>Messages</h3>
+    <section class="panel flush">
+      <div id="chat"></div>
+    </section>
+
+    <div id="controls">
+      <input id="message" placeholder="Type message..." maxlength="2000" autocomplete="off" disabled />
+      <button id="sendBtn" disabled>Send ➤</button>
+    </div>
+
+    <h3>Security log</h3>
+    <section class="panel terminal">
+      <div class="terminal-bar"><i></i><i></i><i></i><span>secure-chat — crypto events</span></div>
+      <div id="log"></div>
+    </section>
+
+    <footer>Server relays ciphertext only · Keys never leave your browser</footer>
+
+    <script src="fx.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

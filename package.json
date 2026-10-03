@@ -1,0 +1,17 @@
+{
+  "name": "secure-chatroom",
+  "version": "2.0.0",
+  "description": "Secure two-user chat prototype using WebSocket, Ed25519, X25519, HKDF and AES-GCM",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ws": "^8.17.0"
+  }
+}
